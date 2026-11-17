@@ -10,9 +10,13 @@ from litestar.status_codes import HTTP_302_FOUND
 from app.config import Config
 from app.db import init_db
 from app.services import (
+    ACTIVE_BOUNDARY,
+    bulk_register,
     close_batch,
     get_batch,
+    get_bulk_run,
     list_batches,
+    list_bulk_runs,
     list_objects,
     list_reports,
     register_object,
@@ -111,6 +115,7 @@ async def api_meta(request: Request) -> dict:
         "lab_name": Config.LAB_NAME,
         "product_line": "cc-manifest-lab",
         "chain": ["落地批次", "对象登记", "清单闭合", "可见性对账"],
+        "commit_boundary": ACTIVE_BOUNDARY,
     }
 
 
@@ -126,7 +131,59 @@ async def api_batch_detail(request: Request, batch_id: int) -> dict:
     batch = get_batch(batch_id)
     if not batch:
         raise HTTPException(status_code=404, detail="批次不存在")
-    return {"batch": batch, "objects": list_objects(batch_id)}
+    return {
+        "batch": batch,
+        "objects": list_objects(batch_id),
+        "bulk_runs": list_bulk_runs(batch_id=batch_id),
+    }
+
+
+BULK_STATUS_CODES = {400: 400, 404: 404, 409: 409}
+
+
+@post("/api/batches/{batch_id:int}/objects/bulk")
+async def api_bulk_register(request: Request, batch_id: int) -> Response:
+    user = require_user(request)
+    body = await request.json()
+    try:
+        run = bulk_register(
+            batch_id,
+            body.get("items"),
+            expected_count=body.get("expected_count"),
+            operator=user,
+            commit_boundary=body.get("commit_boundary"),
+        )
+    except ServiceError as exc:
+        return Response(
+            content={
+                "ok": False,
+                "error": exc.message,
+                "run": exc.run,
+                "commit_boundary": ACTIVE_BOUNDARY,
+            },
+            status_code=BULK_STATUS_CODES.get(exc.status_code, 400),
+            media_type="application/json",
+        )
+    return Response(
+        content={"ok": True, "run": run, "commit_boundary": ACTIVE_BOUNDARY},
+        status_code=200,
+        media_type="application/json",
+    )
+
+
+@get("/api/bulk-runs")
+async def api_bulk_runs(request: Request, batch_id: int | None = None) -> dict:
+    require_user(request)
+    return {"items": list_bulk_runs(batch_id=batch_id), "commit_boundary": ACTIVE_BOUNDARY}
+
+
+@get("/api/bulk-runs/{run_id:int}")
+async def api_bulk_run_detail(request: Request, run_id: int) -> dict:
+    require_user(request)
+    run = get_bulk_run(run_id)
+    if not run:
+        raise HTTPException(status_code=404, detail="批量写入记录不存在")
+    return {"run": run}
 
 
 @post("/api/batches/{batch_id:int}/objects")
@@ -200,6 +257,9 @@ app = Litestar(
         api_batches,
         api_batch_detail,
         api_register,
+        api_bulk_register,
+        api_bulk_runs,
+        api_bulk_run_detail,
         api_close,
         api_reports,
         api_run_report,

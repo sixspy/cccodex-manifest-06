@@ -73,6 +73,28 @@ CREATE TABLE IF NOT EXISTS visibility_reports (
   created_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
+-- 批量写入结算记录：一次批量请求一行，失败也落库，供清洗任务回看
+CREATE TABLE IF NOT EXISTS bulk_runs (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  batch_id INTEGER NOT NULL,
+  operator TEXT NOT NULL DEFAULT '',
+  commit_boundary TEXT NOT NULL,
+  declared_count INTEGER NOT NULL DEFAULT 0,
+  actual_count INTEGER NOT NULL DEFAULT 0,
+  success_count INTEGER NOT NULL DEFAULT 0,
+  failed_count INTEGER NOT NULL DEFAULT 0,
+  ok INTEGER NOT NULL,
+  rolled_back INTEGER NOT NULL DEFAULT 0,
+  success_keys TEXT NOT NULL DEFAULT '[]',
+  failed_keys TEXT NOT NULL DEFAULT '[]',
+  detail TEXT NOT NULL DEFAULT '',
+  created_at TEXT NOT NULL DEFAULT (datetime('now')),
+  FOREIGN KEY(batch_id) REFERENCES landing_batches(id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_bulk_runs_batch ON bulk_runs(batch_id, id);
+CREATE INDEX IF NOT EXISTS idx_objects_batch_key ON landing_objects(batch_id, object_key);
+
 CREATE TABLE IF NOT EXISTS meta (
   key TEXT PRIMARY KEY,
   value TEXT NOT NULL
